@@ -1,0 +1,490 @@
+---
+title: "eda"
+author: "xiaofei_wu"
+date: "12/13/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyr)
+library(tidyverse)
+library(ggplot2)
+library(lme4)
+library(magrittr)
+library(Metrics)
+library(knitr)
+library(arm)
+```
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r,warning=FALSE}
+data<-read.csv("tomslee_airbnb_new_york_1438_2017-07-12.csv")
+
+hist(x=data$price,breaks = 100)
+max(data$price)
+min(data$price)
+# prices are not normally distributed
+# avoid extreme price values and use the inner 99% price for prediction
+data_in<-data%>%filter(price>=quantile(price, .005),price<=quantile(price, .995))
+## delete meanless variables
+data_in<-select(data_in,-c("country","minstay","bathrooms","last_modified","location","city"))
+data$price<-as.numeric(data$price)
+hist(x=data_in$price,breaks = 100, main = paste("Histogram of the inner 99% price")) #not normally distributed
+qqnorm(data_in$price)+
+  qqline(data_in$price)
+
+min(data_in$price)
+
+data_in%<>%mutate(lprice = log(price))
+# take log on price
+hist(x=data_in$lprice,breaks = 30,main = ("Histogram of the logged inner 99% price")) 
+#seems to be closed to normal distribution
+max(data_in$lprice)
+min(data_in$lprice)
+qqnorm(data_in$lprice)+
+  qqline(data_in$lprice)
+
+```
+
+
+# Analyze the explanatory variables 
+
+```{r}
+# correlations between numerical variables. 
+cor1<-cor(data_in%>%select(price,reviews,overall_satisfaction,accommodates,bedrooms,latitude,longitude))
+
+data_log<-data_in%>%mutate(pricelog=log(price), accommodateslog=log(accommodates))
+cor_log<-cor(data_log%>%select(pricelog,reviews,overall_satisfaction,accommodateslog,bedrooms,latitude,longitude))
+# interesting facts: price-accommodates,price-bedrooms, positive
+# price-longitude,negative
+# overall_satisfaction-reviews,positive
+```
+
+
+
+
+## Room characteristic: room_type, "accommodates", "bedrooms","property_type"
+```{r}
+ggplot(data = data_in, mapping = aes(x = property_type))+
+  geom_bar()
+
+ggplot(data = data_in, mapping = aes(x = bedrooms, y = lprice)) +
+  geom_point()+
+  geom_smooth(method = "lm")
+
+# linear correlation between price and accommodates, consider accommodates as a fixed effect
+ggplot(data = data_in, mapping = aes(x = accommodates, y = lprice)) +
+  geom_point()+
+  geom_smooth(method = "lm")
+
+# deleate extreme value of bedrooms
+data3<-data_in%>%filter(bedrooms<=20)
+ggplot(data = data3, mapping = aes(x = accommodates, y = lprice)) +
+  geom_smooth(method = "lm")+
+  geom_point()
+ggplot(data = data3, mapping = aes(x = bedrooms, y = lprice)) +
+  geom_smooth(method = "lm")+
+  geom_point()
+
+```
+
+```{r}
+unique(data_in$room_type) # Shared room     Entire home/apt  Private room
+ggplot(data.frame(data_in),mapping = aes(x = room_type)) +
+  geom_bar( fill = "lightblue")
+
+
+ggplot(data = data_in,mapping = aes(x = accommodates, y = lprice)) + 
+  geom_point() + 
+  facet_wrap(~ room_type, nrow = 3)+
+  geom_smooth()
+
+ggplot(data = data_in,mapping = aes(x = bedrooms, y = lprice)) + 
+  geom_point() + 
+  facet_wrap(~ room_type, nrow = 3)+
+  geom_smooth()
+#the effect (slope) of accommodates on price differ from room_type
+
+ggplot(data = data3,mapping = aes(x = bedrooms, y = lprice)) + 
+  geom_point() + 
+  facet_wrap(~ borough, nrow = 3)+
+  geom_smooth()
+#the effect (slope) of accommodates on price differ from room_type
+
+## different room_type has different price distribution, consider room_type 
+ggplot(data = data_in, mapping = aes(x = room_type, y = price)) +
+  geom_boxplot(colour = "lightblue")
+
+## different room_type has different price distribution, consider accommodates as a fixed effect 
+ggplot(data = data_in, mapping = aes(x = as.factor(accommodates), y = price)) +
+  geom_boxplot()
+ggplot(data = data_in, mapping = aes(x = accommodates)) +
+  geom_bar()
+
+
+## slope and intercept change for accommodates in different room_type groups (1+accommodates|room_type)
+ggplot(data_in, aes(x=accommodates, y=log(price+1),group=room_type, color=room_type))+
+  geom_smooth(method="lm")+
+  ylab("price")+
+  ggtitle("price v.s. accommodates per room_type")+
+  guides(color=FALSE)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+## no slope and intercept change for accommodates in different property_type groups 
+property_type<-ggplot(data_in, aes(x=accommodates, y=log(price+1),group=property_type, color=property_type))+
+  geom_smooth(method="lm")+
+  ylab("price")+
+  ggtitle("price v.s. accommodates per property_type")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+
+##slope and intercept change for accommodates in different bedrooms groups 
+ggplot(data_in, aes(x=accommodates, y=log(price+1),group=bedrooms, color=bedrooms))+
+  geom_smooth(method="lm")+
+  ylab("price")+
+  ggtitle("price v.s. accommodates for number of bedrooms")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+```
+
+
+## geomatric: borough,neighborhood,latitude,longitude
+
+```{r,echo=FALSE}
+ggplot(data = data_in, mapping = aes(x = as.factor(borough), y = price)) +
+  ggtitle("price v.s. borough")+
+  geom_boxplot(color = "skyblue")+  guides(color=FALSE)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  theme(axis.title.x = element_text(face="bold",  size=15), axis.title.y = element_text(face="bold",  size=15),plot.title = element_text(size=15, face="bold"),  axis.text.x  = element_text(angle=45,vjust=0.5, size=10))
+## Manhattan>brooklyn>others  
+
+ggplot(data = data_in,mapping = aes(x = longitude, y = price)) + 
+  geom_point() + 
+  facet_wrap(~ borough, nrow = 3)+
+  geom_smooth()+
+  ggtitle("price v.s. longitude v.s. borough")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+# Tabulate the neighborhood with the average price in the training dataset
+tapply(data_in$price, data_in$borough, mean)
+#        Bronx      Brooklyn     Manhattan        Queens Staten Island 
+#     75.86657     110.75733     156.54179      90.50153      96.85455 
+```
+
+## review: reviews, overall satisfaction 
+
+```{r}
+# more reviews imply lower price?
+ggplot(data = data_in, mapping = aes(x = reviews, y = lprice)) +
+  geom_smooth(method="lm")+
+  ggtitle("price v.s. reviews")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+# more reviews imply lower price?  yes
+ggplot(data = data_in, mapping = aes(x = reviews, y = lprice)) +
+   facet_wrap(~ accommodates,nrow = 4)+
+  geom_smooth(method="lm")+
+    ggtitle("price v.s. reviews for different accommodates")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+# more reviews imply lower price?  yes 
+ggplot(data = data_in, mapping = aes(x = reviews, y = lprice)) +
+   facet_wrap(~ room_type)+
+  geom_smooth(method="lm")+
+      ggtitle("price v.s. reviews for different room types")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(data = data_in, mapping = aes(x = as.factor(overall_satisfaction), y = price)) +
+  geom_boxplot()
+
+# higher overall_satisfaction imply lower price?
+ggplot(data = data_in, mapping = aes(x = overall_satisfaction, y = lprice))+
+  geom_smooth(method="lm")+
+    ggtitle("price v.s. overall_satisfaction")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(data = data_in, mapping = aes(x = overall_satisfaction, y = lprice))+
+  facet_wrap(~ room_type)+
+  geom_smooth(method="lm")+
+    ggtitle("price v.s. overall_satisfaction for different room types")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+ggplot(data = data_in, mapping = aes(x = accommodates, y = lprice))+
+  facet_wrap(~ accommodates)+
+  geom_smooth(method="lm")+
+    ggtitle("price v.s. overall_satisfaction for different accommodates")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+# more reviews imply more satisfaction.
+ggplot(data = data_in, mapping = aes(x = reviews, y = overall_satisfaction)) +
+  geom_smooth(method="lm")
+
+# the effect of reviews on price does not differ by overall_satisfaction
+ggplot(data=data_in, mapping = aes(x=reviews,y=price, group = overall_satisfaction, color = overall_satisfaction))+
+  geom_smooth(method="lm")
+```
+
+## model1 -- linear regression
+
+```{r}
+# fit a linear regression to see the significance of variables. 
+lm1<-lm(data=data_in,lprice~overall_satisfaction+bedrooms+property_type+latitude+longitude+accommodates+borough+room_type+reviews+neighborhood)
+summary(lm1)
+rmse(log(data_in$price), predict(lm1,data_in)) # 0.3699716
+# accommodates, borough, room_type, reviews, some neighborhoods, overall_satisfaction,bedrooms,some property_types, longitude are significant in the model. 
+```
+
+
+## model2 -- mixed effect
+```{r}
+## group by Room characteristic: room_type, "accommodates", "bedrooms","property_type"
+m1<-lmer(data = data_in, lprice~accommodates+(1|room_type))  
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(log(data_in$price), predict(m1,data_in)) # 0.4524676
+```
+
+```{r}
+## group by Room characteristic: room_type, "accommodates", "bedrooms","property_type"
+m5<-lmer(data = data_in, lprice~accommodates+(1|borough:neighborhood))  
+summary(m5) 
+plot(m5)
+qqnorm(resid(m5))+
+  qqline(resid(m5))
+rmse(log(data_in$price), predict(m5,data_in)) # 0.4356327
+```
+
+# bedrooms as a fixed effect
+```{r}
+m2<-lmer(data = data_in, lprice~accommodates+bedrooms+reviews+(1+accommodates|room_type))
+summary(m2) 
+plot(m2)
+qqnorm(resid(m2))+
+  qqline(resid(m2))
+rmse(log(data_in$price), predict(m2,data_in)) # 0.4486864 
+```
+
+# bedrooms as a fixed effect
+```{r}
+m4<-lmer(data = data_in, lprice~accommodates+bedrooms+reviews+overall_satisfaction+property_type+latitude+longitude+(1+accommodates|room_type)+(accommodates|borough:neighborhood))
+display(m4) 
+plot(m4)
+qqnorm(resid(m4))+
+  qqline(resid(m4))
+rmse(log(data_in$price), predict(m4,data_in)) # 0.3675805
+```
+# bedrooms as a random effect
+```{r}
+m6<-lmer(data = data_in, lprice~accommodates+reviews+overall_satisfaction+property_type+latitude+longitude+(1+accommodates|room_type)+(accommodates|borough:neighborhood)+(accommodates|bedrooms))
+summary(m6) 
+plot(m6)
+qqnorm(resid(m6))+
+  qqline(resid(m6))
+rmse(log(data_in$price), predict(m6,data_in)) # 
+```
+
+# bedrooms as a fixed effect
+```{r}
+m4<-lmer(data = data_in, lprice~accommodates+bedrooms+reviews+(1+accommodates|room_type)+(accommodates|borough:neighborhood))
+summary(m4) 
+plot(m4)
+qqnorm(resid(m4))+
+  qqline(resid(m4))
+rmse(log(data_in$price), predict(m4,data_in)) # 0.3715812
+```
+
+# bedrooms as a random effect
+```{r}
+m3<-lmer(data = data_in, lprice~accommodates+reviews+(1+accommodates|room_type)+(accommodates|bedrooms))
+summary(m3) 
+plot(m3)
+qqnorm(resid(m3))+
+  qqline(resid(m3))
+rmse(log(data_in$price), predict(m3,data_in)) # 0.4467946 
+```
+
+```{r}
+m1<-lmer(data = data_in, price~accommodates+(1|bedrooms))
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(data_in$price, predict(m1,data_in)) # 80.01198
+
+m1<-lmer(data = data_in, price~accommodates+(0+accommodates|bedrooms))
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(data_in$price, predict(m1,data_in)) # 80.6936
+
+m1<-lmer(data = data_in, price~accommodates+1|room_type+1|bedrooms)  
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(data_in$price, predict(m1,data_in))
+
+
+
+m1<-lmer(data = data_in, price~accommodates+1|borough)  
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(data_in$price, predict(m1,data_in)) # 76.50548
+
+m1<-lmer(data = data_in, price~accommodates+1|neighborhood)  
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(data_in$price, predict(m1,data_in)) # 69.10128
+
+data_Q<-data_in%>%filter(borough=="Queens")
+data_B<-data_in%>%filter(borough=="Brooklyn")
+data_M<-data_in%>%filter(borough=="Manhattan")
+data_bronx<-data_in%>%filter(borough=="Bronx")
+data_S<-data_in%>%filter(borough=="Staten Island")
+
+length(unique(data_in$neighborhood))==(length(unique(data_Q$neighborhood))+length(unique(data_B$neighborhood))+length(unique(data_M$neighborhood))+length(unique(data_bronx$neighborhood))+length(unique(data_S$neighborhood))) #TRUE  so neighborhood is all nested in borough 
+
+# Let's group by neighborhood instead of borough to be more accurate
+
+
+m1<-lmer(data = data_in, price~accommodates+bedrooms+1|neighborhood)  
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(data_in$price, predict(m1,data_in)) # 67.95895
+
+m1<-lmer(data = data_in, log(price)~accommodates+bedrooms+1|neighborhood)  
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(data_in$price, exp(predict(m1,data_in)))  # 77.60552
+
+datat<-data_in[c(1:1000),]
+
+m1<-lmer(data = data_in, price~accommodates+bedrooms+(1|neighborhood)+(0+accommodates|room_type))
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(data_in$price, predict(m1,data_in)) # 67.95895
+
+m5<-lmer(data = data_in, log(price)~accommodates+bedrooms+(1|room_type)+(1|neighborhood))  
+summary(m1) 
+plot(m5)
+qqnorm(resid(m5))+
+  qqline(resid(m5))
+# RMSE
+RMSE = sqrt(mean((predict(m5,data_in) - log(data_in$price))^2))
+RMSE # 0.36864
+
+
+m1<-lmer(data = data_in, log(price)~accommodates+(1|borough/neighborhood))  
+summary(m1) 
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(log(data_in$price), predict(m1,data_in)) # 71.27303
+
+m1<-lmer(data = data_in, price~accommodates+(1|neighborhood))  
+rmse(data_in$price, predict(m1,data_in))  # 71.29844
+
+
+
+ggplot(data_in, aes(x = accommodates, y = price, colour = neighborhood)) +
+      facet_wrap(~borough, nrow=2) +   # a panel for each mountain range
+      geom_point(alpha = 0.5) +
+      theme_classic() +
+      geom_line(data = cbind(dragons, pred = predict(mixed.lmer2)), aes(y = pred), size = 1) +  # adding predicted line from mixed model 
+      theme(legend.position = "none",
+            panel.spacing = unit(2, "lines"))  # adding space between panels
+)
+
+## Nested random effects
+# neighborhood within a borough may be more similar to each other, therefore add a random effect structure that accounts for this nesting:
+
+
+summary(m3)
+rmse(data_in$price, exp(predict(m3,data_in))) # 78.21179
+
+m1<-lmer(data = data_in, price~borough+room_type+reviews+accommodates+1|neighborhood)
+
+m2<-lmer(data = data_in, price~reviews+accommodates+1|borough+1|room_type)
+# Compute model quality for a given dataset
+# using rmse(): the root-mean-squared-error
+rmse(data_in$price, predict(m2,data_in))
+
+
+
+
+
+# group by geometric: borough
+m1<-lmer(data = data_in, log(price)~accommodates+1|borough)
+summary(m1)  # Variance of borough is 0.40277 when total Variance is 0.40277+0.24062+0.02814. borough explains a lot of the vatiance in the model. 
+# So the differences between borough explain ~62% of the variance that’s “left over” after the variance explained by our fixed effects.
+plot(m1)
+qqnorm(resid(m1))+
+  qqline(resid(m1))
+rmse(data_in$price, exp(predict(m1,data_in))) # 87.9421
+
+# room_type
+m2<-lmer(data = data_in, log(price)~accommodates+1|room_type)
+summary(m2)
+plot(m2)
+qqnorm(resid(m2))+
+  qqline(resid(m2)) 
+rmse(data_in$price, exp(predict(m2,data_in))) # 78.21179
+
+# room_type
+m2<-lmer(data = data_in, log(price)~accommodates+(1+accommodates|room_type))
+summary(m2)
+plot(m2)
+qqnorm(resid(m2))+
+  qqline(resid(m2)) 
+rmse(data_in$price, exp(predict(m2,data_in))) # 78.21115
+
+# bedrooms
+m2<-lmer(data = data_in, log(price)~accommodates+(1+accommodates|bedrooms))
+summary(m2)
+plot(m2)
+qqnorm(resid(m2))+
+  qqline(resid(m2)) 
+rmse(data_in$price, exp(predict(m2,data_in))) # 84.33114
+
+# bedrooms+room_type
+m2<-lmer(data = data_in, log(price)~accommodates+(1+accommodates|bedrooms)+(1+accommodates|room_type))
+summary(m2)
+plot(m2)
+qqnorm(resid(m2))+
+  qqline(resid(m2)) 
+rmse(data_in$price, exp(predict(m2,data_in))) # 76.63259
+
+
+
+
+
+
+
+m2<-lmer(data = data_in, price~overall_satisfaction+accommodates+1|borough)
+rmse(data_in$price, predict(m2,data_in))
+```
